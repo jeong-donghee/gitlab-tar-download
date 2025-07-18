@@ -7,11 +7,6 @@
 <body class="container mt-5">
     <h2>변환된 TAR 다운로드</h2>
 
-    {% if filename %}
-        <p>✅ 변환 완료: <strong>{{ filename }}</strong></p>
-        <a class="btn btn-success" href="/download/{{ filename }}">📦 다운로드</a>
-    {% else %}
-        <p class="text-danger">❌ 변환된 파일이 없습니다.</p>
-    {% endif %}
+    <a class="btn btn-success" href="/download/{{ filename }}">📦 다운로드</a>
 </body>
 </html>

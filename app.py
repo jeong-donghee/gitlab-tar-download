@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 import requests
@@ -5,20 +6,34 @@ import gzip
 import tarfile
 import tempfile
 from io import BytesIO
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, send_file
 
-app = Flask(__name__)
-DOWNLOAD_DIR = "downloads"
-CONFIG_PATH = "config/download_config.json"
+def resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+TEMPLATE_PATH = resource_path("templates")
+app = Flask(__name__, template_folder=TEMPLATE_PATH)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+CONFIG_PATH = os.environ.get("CONFIG_PATH", os.path.join("config", "download_config.json"))
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 tar_file_name = None  # 생성된 .tar 파일 이름
 
 def load_config():
     with open(CONFIG_PATH) as f:
-        return json.load(f)
+        config = json.load(f)
 
-def download_and_convert(config):
+        global tar_file_name
+
+        output_name = config["output_name"].strip()
+        tar_file_name = output_name
+
+        return config
+
+def download_tar(config):
     global tar_file_name
 
     repo_url = config["repo_url"].rstrip("/")
@@ -28,7 +43,7 @@ def download_and_convert(config):
     tar_file_name = output_name
 
     repo_name = repo_url.split("/")[-1]
-    archive_url = f"{repo_url}/-/archive/{branch}/{repo_name}-{branch}.tar.gz"
+    archive_url = f"{repo_url}/-/archive/{branch}/{repo_name}-{branch}.tar"
     print(f"[INFO] archive_url: {archive_url}")
 
     headers = {
@@ -43,28 +58,27 @@ def download_and_convert(config):
         print(response.text[:500])
         return
 
-    tar_gz_bytes = BytesIO(response.content)
-    with gzip.GzipFile(fileobj=tar_gz_bytes) as gz:
-        with tempfile.NamedTemporaryFile(delete=False) as temp_tar_file:
-            temp_tar_file.write(gz.read())
-            temp_tar_path = temp_tar_file.name
-
+    new_top_dir = os.path.splitext(output_name)[0]
     tar_path = os.path.join(DOWNLOAD_DIR, output_name)
-    new_root = os.path.splitext(output_name)[0]
 
-    with tarfile.open(temp_tar_path, "r") as old_tar:
-        with tarfile.open(tar_path, "w", format=tarfile.GNU_FORMAT) as new_tar:
+    source_tar = BytesIO(response.content)
+    repackaged_tar = BytesIO()
+
+    with tarfile.open(fileobj=source_tar, mode="r") as old_tar:
+        with tarfile.open(fileobj=repackaged_tar, mode="w", format=tarfile.GNU_FORMAT) as new_tar:
             for member in old_tar.getmembers():
                 parts = member.name.split("/")
-                if len(parts) < 2:
-                    continue
-                rest_path = "/".join(parts[1:])
-                member.name = f"{new_root}/{rest_path}" if rest_path else new_root
+                if len(parts) > 0:
+                    parts[0] = new_top_dir
+                member.name = "/".join(parts)
                 file_data = old_tar.extractfile(member) if member.isfile() else None
                 new_tar.addfile(member, file_data)
 
-    os.remove(temp_tar_path)
-    print(f"✅ 변환 완료: {tar_path}")
+    with open(tar_path, "wb") as f:
+        f.write(repackaged_tar.getbuffer())
+
+    print(f"[INFO] Saved repackaged tar to {tar_path}")
+    return output_name
 
 @app.route("/")
 def index():
@@ -72,9 +86,18 @@ def index():
 
 @app.route("/download/<filename>")
 def download(filename):
-    return send_from_directory(DOWNLOAD_DIR, filename, as_attachment=True)
+    config = load_config()
+    try:
+        download_tar(config)
+        file_path = os.path.join(DOWNLOAD_DIR, filename)
+        if not os.path.exists(file_path):
+            return f"❌ 파일이 존재하지 않습니다: {file_path}", 404
+        return send_file(file_path, as_attachment=True)
+    except Exception as e:
+        return f"❌ 다운로드 실패: {str(e)}", 500
+    except Exception as e:
+        return f"❌ 다운로드 실패: {str(e)}", 500
 
 if __name__ == "__main__":
-    config = load_config()
-    download_and_convert(config)
+    load_config()
     app.run(debug=True, host="0.0.0.0", port=5000)
