@@ -1,0 +1,6 @@
+{
+  "repo_url": "https://gitlab.com/example-user/my-repo",
+  "branch": "main",
+  "access_token": "glpat-xxxxxxxxxxxxxxxx",
+  "output_name": "myproject.tar"
+}
